@@ -1,0 +1,1943 @@
+#################
+#### imports ####
+#################
+ 
+from flask import render_template, Blueprint, request, redirect, url_for, flash, session
+from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user, current_user
+from project.models import Playlist, Channel, Meetup, Network, Twitter, Quarterly, AnalyticsConv, AnalyticsGA, Probono, Papers, Users, Members, Corporate, Certify, Gender, Trans, Race, Religion, Orient, Disable, Training, Events, Regional, SIGs, Social, Web, Courses
+from project.forms import AddYouTubeForm, AddMeetupForm, AddNetworkForm, AddTwitterForm, AddQuarterForm, AddPagesForm, AddProBonoForm, AddPapersForm, AddSummitForm, AddTrainingForm, AddUserForm, LoginForm, PasswordForm, SearchUser, AddMemberForm, AddCertifyForm, AddCorporateForm, AddGenderForm, AddTransForm, AddRaceForm, AddReligionForm, AddOrientForm, AddDisableForm, AddEventsForm, AddRegionalForm, AddSIGsForm, AddSocialForm, AddWebForm, AddCoursesForm
+from project import db
+from werkzeug.utils import secure_filename
+import pandas as pd
+import os
+import numpy as np
+import glob
+
+ALLOWED_EXTENSIONS = set(['xlsx', '.xls', '.csv'])
+
+def allowed_file(filename):
+	if filename[-4:].lower() in ALLOWED_EXTENSIONS:
+		return True
+	else:
+		return False
+
+def flash_errors(form):
+	for field, errors in form.errors.items():
+		for error in errors:
+			flash(u"Error in the %s field – %s" % (
+			getattr(form, field).label.text,
+			error
+			), 'info')
+	 
+ 
+################
+#### config ####
+################
+ 
+recipes_blueprint = Blueprint('recipes', __name__, template_folder='templates')
+ 
+ 
+################
+#### routes ####
+################
+ 
+@recipes_blueprint.route('/')
+@login_required
+def index():
+	return render_template('home.html')
+
+@recipes_blueprint.route('/add_user', methods=['GET', 'POST'])
+@login_required
+def add_user():
+	form = AddUserForm(request.form)
+	if request.method == 'POST':
+		user_check = Users.query.filter_by(user_name=form.user_name.data).first()
+		try:
+			if form.validate_on_submit():
+				new_user = Users(form.user_name.data, form.email_add.data, form.password.data, False)
+				db.session.add(new_user)
+				db.session.commit()
+				return redirect(url_for('recipes.index'))
+			else:
+				flash_errors(form)
+				flash('ERROR! Data was not added.', 'error')
+		except:
+			if user_check is not None:
+				db.session.rollback()
+				flash('ERROR! Name ({}) already exists.'.format(form.user_name.data), 'error')
+			else:
+				if user_check is None:
+					db.session.rollback()
+					flash('ERROR! Data was not added. Unknown error', 'error')
+ 
+	return render_template('add_user.html', form=form)
+
+
+@recipes_blueprint.route('/login', methods=['GET', 'POST'])
+def login():
+	form = LoginForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			user = Users.query.filter_by(email_add=form.email_add.data).first()
+			if user is not None and user.is_correct_password(form.password.data):
+				user.authenticated = True
+				db.session.add(user)
+				db.session.commit()
+				login_user(user)
+				flash('Thanks for logging in, {}'.format(current_user.user_name))
+				return redirect(url_for('recipes.index'))
+			else:
+				flash('ERROR! Incorrect login credentials.', 'error')
+	return render_template('login.html', form=form)
+
+@recipes_blueprint.route('/logout')
+@login_required
+def logout():
+	user = current_user
+	user.authenticated = False
+	db.session.add(user)
+	db.session.commit()
+	logout_user()
+	flash('Goodbye!', 'info')
+	return redirect(url_for('recipes.login'))
+
+@recipes_blueprint.route('/password_change', methods=["GET", "POST"])
+@login_required
+def user_password_change():
+	form = PasswordForm()
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			user = current_user
+			user.password = form.password.data
+			db.session.add(user)
+			db.session.commit()
+			return redirect(url_for('recipes.index'))
+ 
+	return render_template('change_password.html', form=form)
+	
+@recipes_blueprint.route('/members')
+@login_required
+def members():
+	all_recipes = Members.query.order_by(Members.Date).all()
+	form = AddMemberForm(request.form)
+	return render_template('members.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_membership', methods=['GET', 'POST'])
+@login_required
+def add_membership():
+	form = AddMemberForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_member = Members(str(form.date.data), form.full.data, form.student.data)
+							db.session.add(new_member)
+							db.session.commit()
+							memberOut = pd.read_sql(db.session.query(Members).statement, db.session.bind)
+							memberOut['Date'] = pd.to_datetime(memberOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							memberOut = memberOut.sort_values(by='Date')
+							memberOut.to_csv('/srv/shiny-server/apps/PMW/members.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Membership" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_membership.html', form=form)
+
+@recipes_blueprint.route('/edit_membership', methods=['GET', 'POST'])
+@login_required
+def edit_membership():
+	form = AddMemberForm(request.form)
+	date = request.form['mydate']
+	record = Members.query.filter_by(Date=date).first()
+	return render_template('edit_membership.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_membership', methods=['GET', 'POST'])
+@login_required
+def update_membership():
+	form = AddMemberForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE membership SET Full = " + str(form.full.data) + ", Student = " + str(form.student.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			memberOut = pd.read_sql(db.session.query(Members).statement, db.session.bind)
+			memberOut['Date'] = pd.to_datetime(memberOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			memberOut = memberOut.sort_values(by='Date')
+			memberOut.to_csv('/srv/shiny-server/apps/PMW/members.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	date = request.form['mydate']
+	record = Members.query.filter_by(Date=date).first()
+	return render_template('edit_membership.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/corporate')
+@login_required
+def corporate():
+	all_recipes = Corporate.query.order_by(Corporate.Date).all()
+	form = AddCorporateForm(request.form)
+	return render_template('corporate.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_corporate', methods=['GET', 'POST'])
+@login_required
+def add_corporate():
+	form = AddCorporateForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_corp = Corporate(str(form.date.data), form.partners.data, form.affiliates.data)
+							db.session.add(new_corp)
+							db.session.commit()
+							corpOut = pd.read_sql(db.session.query(Corporate).statement, db.session.bind)
+							corpOut['Date'] = pd.to_datetime(corpOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							corpOut = corpOut.sort_values(by='Date')
+							corpOut.to_csv('/srv/shiny-server/apps/PMW/corporate.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Corporate" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_corporate.html', form=form)
+
+@recipes_blueprint.route('/edit_corporate', methods=['GET', 'POST'])
+@login_required
+def edit_corporate():
+	form = AddCorporateForm(request.form)
+	date = request.form['mydate']
+	record = Corporate.query.filter_by(Date=date).first()
+	return render_template('edit_corporate.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_corporate', methods=['GET', 'POST'])
+@login_required
+def update_corporate():
+	form = AddCorporateForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE corporate SET Partners = " + str(form.partners.data) + ", Affiliates = " + str(form.affiliates.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			corpOut = pd.read_sql(db.session.query(Corporate).statement, db.session.bind)
+			corpOut['Date'] = pd.to_datetime(corpOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			corpOut = corpOut.sort_values(by='Date')
+			corpOut.to_csv('/srv/shiny-server/apps/PMW/corporate.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	date = request.form['mydate']
+	record = Corporate.query.filter_by(Date=date).first()
+	return render_template('edit_corporate.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/accreditation')
+@login_required
+def accreditation():
+	all_recipes = Certify.query.order_by(Certify.Date).all()
+	form = AddCertifyForm(request.form)
+	return render_template('accreditation.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_accreditation', methods=['GET', 'POST'])
+@login_required
+def add_accreditation():
+	form = AddCertifyForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_corp = Certify(str(form.date.data), form.ORS.data, form.CSci.data, form.CAP.data)
+							db.session.add(new_corp)
+							db.session.commit()
+							creditOut = pd.read_sql(db.session.query(Certify).statement, db.session.bind)
+							creditOut['Date'] = pd.to_datetime(creditOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							creditOut = creditOut.sort_values(by='Date')
+							creditOut.to_csv('/srv/shiny-server/apps/PMW/accredit.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Accreditation" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_accreditation.html', form=form)
+	
+@recipes_blueprint.route('/edit_accreditation', methods=['GET', 'POST'])
+@login_required
+def edit_accreditation():
+	form = AddCertifyForm(request.form)
+	date = request.form['mydate']
+	record = Certify.query.filter_by(Date=date).first()
+	return render_template('edit_accreditation.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_accreditation', methods=['GET', 'POST'])
+@login_required
+def update_accreditation():
+	form = AddCertifyForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE certify SET ORS = " + str(form.ORS.data) + ", CSci = " + str(form.CSci.data) + ", CAP = " + str(form.CAP.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			creditOut = pd.read_sql(db.session.query(Certify).statement, db.session.bind)
+			creditOut['Date'] = pd.to_datetime(creditOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			creditOut = creditOut.sort_values(by='Date')
+			creditOut.to_csv('/srv/shiny-server/apps/PMW/accredit.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	date = request.form['mydate']
+	record = Certify.query.filter_by(Date=date).first()
+	return render_template('edit_accreditation.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/gender')
+@login_required
+def gender():
+	all_recipes = Gender.query.order_by(Gender.Date).all()
+	form = AddGenderForm(request.form)
+	return render_template('gender.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_gender', methods=['GET', 'POST'])
+@login_required
+def add_gender():
+	form = AddGenderForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_gender = Gender(str(form.date.data), form.male.data, form.female.data, form.unknown.data)
+							db.session.add(new_gender)
+							db.session.commit()
+							genderOut = pd.read_sql(db.session.query(Gender).filter(Gender.id == 1).statement, db.session.bind)
+							genderOut['Date'] = pd.to_datetime(genderOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							genderOut = genderOut.sort_values(by='Date')
+							genderOut.to_csv('/srv/shiny-server/apps/PMW/gender.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Gender" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_gender.html', form=form)
+
+@recipes_blueprint.route('/edit_gender', methods=['GET', 'POST'])
+@login_required
+def edit_gender():
+	form = AddGenderForm(request.form)
+	date = request.form['mydate']
+	record = Gender.query.filter_by(Date=date).first()
+	return render_template('edit_gender.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_gender', methods=['GET', 'POST'])
+@login_required
+def update_gender():
+	form = AddGenderForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE gender SET Male = " + str(form.male.data) + ", Female = " + str(form.female.data) + ", Unknown = " + str(form.unknown.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			genderOut = pd.read_sql(db.session.query(Gender).statement, db.session.bind)
+			genderOut.to_csv('/srv/shiny-server/apps/PMW/gender.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	date = request.form['mydate']
+	record = Gender.query.filter_by(Date=date).first()
+	return render_template('edit_gender.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/transgender')
+@login_required
+def transgender():
+	all_recipes = Trans.query.all()
+	form = AddTransForm(request.form)
+	return render_template('transgender.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/edit_transgender', methods=['GET', 'POST'])
+@login_required
+def edit_transgender():
+	form = AddTransForm(request.form)
+	record = Trans.query.filter_by(id=1).first()
+	return render_template('edit_transgender.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_transgender', methods=['GET', 'POST'])
+@login_required
+def update_transgender():
+	form = AddTransForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE transgender SET Yes = " + str(form.yes.data) + ", No = " + str(form.no.data) + ", Unknown = " + str(form.unknown.data) + ", Skipped = " + str(form.skipped.data) + " WHERE id = 1;"
+			result = db.engine.execute(sql_string)
+			data = {'Transgender': ['Yes', 'No', 'Not answered', 'Skipped'], 'Frequency': [int(form.yes.data), int(form.no.data), int(form.unknown.data), int(form.skipped.data)]}
+			transOut = pd.DataFrame(data=data)
+			transOut.to_csv('/srv/shiny-server/apps/PMW/transgender.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	form = AddTransForm(request.form)
+	record = Trans.query.filter_by(id=1).first()
+	return render_template('edit_transgender.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/ethnicity')
+@login_required
+def ethnicity():
+	all_recipes = Race.query.all()
+	form = AddRaceForm(request.form)
+	return render_template('ethnicity.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_ethnicity', methods=['GET', 'POST'])
+@login_required
+def add_ethnicity():
+	form = AddRaceForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			try:
+				new_race = Race(form.ethnicity.data, form.full.data, form.student.data)
+				db.session.add(new_race)
+				db.session.commit()
+				raceOut = pd.read_sql(db.session.query(Race).statement, db.session.bind)
+				raceOut.to_csv('/srv/shiny-server/apps/PMW/race.csv', sep=',', encoding='utf-8', index=False)
+				timeN = pd.Timestamp.now()
+				data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+				upTime = pd.DataFrame(data=data)
+				upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+				return redirect(url_for('recipes.add_ethnicity'))
+			except:
+				db.session.rollback()
+				flash_errors(form)
+				flash('ERROR! Duplicate ethnicity name. Please use "edit" on the "Ethnicities" menu to change.', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_ethnicity.html', form=form)
+
+@recipes_blueprint.route('/edit_ethnicity', methods=['GET', 'POST'])
+@login_required
+def edit_ethnicity():
+	form = AddRaceForm(request.form)
+	ethnicity = request.form['ethnicity']
+	record = Race.query.filter_by(Ethnicity=ethnicity).first()
+	return render_template('edit_ethnicity.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_ethnicity', methods=['GET', 'POST'])
+@login_required
+def update_ethnicity():
+	form = AddRaceForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE race SET Full = " + str(form.full.data) + ", Student = " + str(form.student.data) + " WHERE Ethnicity = '" + str(request.form['ethnicity']) + "';"
+			result = db.engine.execute(sql_string)
+			raceOut = pd.read_sql(db.session.query(Race).statement, db.session.bind)
+			raceOut.to_csv('/srv/shiny-server/apps/PMW/race.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	ethnicity = request.form['ethnicity']
+	record = Race.query.filter_by(Ethnicity=ethnicity).first()
+	return render_template('edit_ethnicity.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/religion')
+@login_required
+def religion():
+	all_recipes = Religion.query.all()
+	form = AddReligionForm(request.form)
+	return render_template('religion.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_religion', methods=['GET', 'POST'])
+@login_required
+def add_religion():
+	form = AddReligionForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			try:
+				new_religion = Religion(form.religion.data, form.freq.data)
+				db.session.add(new_religion)
+				db.session.commit()
+				relOut = pd.read_sql(db.session.query(Religion).statement, db.session.bind)
+				relOut.to_csv('/srv/shiny-server/apps/PMW/religion.csv', sep=',', encoding='utf-8', index=False)
+				timeN = pd.Timestamp.now()
+				data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+				upTime = pd.DataFrame(data=data)
+				upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+				return redirect(url_for('recipes.add_religion'))
+			except:
+				db.session.rollback()
+				flash_errors(form)
+				flash('ERROR! Duplicate religion. Please use "edit" on the "Religion" menu to change.', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_religion.html', form=form)
+
+@recipes_blueprint.route('/edit_religion', methods=['GET', 'POST'])
+@login_required
+def edit_religion():
+	form = AddReligionForm(request.form)
+	religion = request.form['religion']
+	record = Religion.query.filter_by(Religion=religion).first()
+	return render_template('edit_religion.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_religion', methods=['GET', 'POST'])
+@login_required
+def update_religion():
+	form = AddReligionForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE religion SET Frequency = " + str(form.freq.data) + " WHERE Religion = '" + str(request.form['religion']) + "';"
+			result = db.engine.execute(sql_string)
+			religionOut = pd.read_sql(db.session.query(Religion).statement, db.session.bind)
+			religionOut.to_csv('/srv/shiny-server/apps/PMW/religion.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	religion = request.form['religion']
+	record = Religion.query.filter_by(Religion=religion).first()
+	return render_template('edit_religion.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/orientation')
+@login_required
+def orientation():
+	all_recipes = Orient.query.all()
+	form = AddOrientForm(request.form)
+	return render_template('orientation.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_orientation', methods=['GET', 'POST'])
+@login_required
+def add_orientation():
+	form = AddOrientForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			try:
+				new_orient = Orient(form.orient.data, form.freq.data)
+				db.session.add(new_orient)
+				db.session.commit()
+				orientOut = pd.read_sql(db.session.query(Orient).statement, db.session.bind)
+				orientOut.to_csv('/srv/shiny-server/apps/PMW/orient.csv', sep=',', encoding='utf-8', index=False)
+				timeN = pd.Timestamp.now()
+				data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+				upTime = pd.DataFrame(data=data)
+				upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+				return redirect(url_for('recipes.add_orientation'))
+			except:
+				db.session.rollback()
+				flash_errors(form)
+				flash('ERROR! Duplicate orientation. Please use "edit" on the "Orientation" menu to change.', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_orientation.html', form=form)
+
+@recipes_blueprint.route('/edit_orientation', methods=['GET', 'POST'])
+@login_required
+def edit_orientation():
+	form = AddOrientForm(request.form)
+	orient = request.form['orient']
+	record = Orient.query.filter_by(Orientation=orient).first()
+	return render_template('edit_orientation.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_orientation', methods=['GET', 'POST'])
+@login_required
+def update_orientation():
+	form = AddOrientForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE orient SET Frequency = " + str(form.freq.data) + " WHERE Orientation = '" + str(request.form['orient']) + "';"
+			result = db.engine.execute(sql_string)
+			orientOut = pd.read_sql(db.session.query(Orient).statement, db.session.bind)
+			orientOut.to_csv('/srv/shiny-server/apps/PMW/orient.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	orient = request.form['orient']
+	record = Orient.query.filter_by(Orientation=orient).first()
+	return render_template('edit_orientation.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/disabilities')
+@login_required
+def disabilities():
+	all_recipes = Disable.query.all()
+	form = AddDisableForm(request.form)
+	return render_template('disabilities.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_disabilities', methods=['GET', 'POST'])
+@login_required
+def add_disabilities():
+	form = AddDisableForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			new_disable = Disable(form.disable.data, form.freq.data)
+			db.session.add(new_disable)
+			try:
+				db.session.commit()
+				disableOut = pd.read_sql(db.session.query(Disable).statement, db.session.bind)
+				disableOut.to_csv('/srv/shiny-server/apps/PMW/disability.csv', sep=',', encoding='utf-8', index=False)
+				timeN = pd.Timestamp.now()
+				data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+				upTime = pd.DataFrame(data=data)
+				upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+				return redirect(url_for('recipes.add_disabilities'))
+			except:
+				db.session.rollback()
+				flash_errors(form)
+				flash('ERROR! Duplicate disability name. Please use "edit" on the "Disabilities" menu to change.', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_disabilities.html', form=form)
+
+@recipes_blueprint.route('/edit_disabilities', methods=['GET', 'POST'])
+@login_required
+def edit_disabilities():
+	form = AddDisableForm(request.form)
+	Disability = request.form['disability']
+	record = Disable.query.filter_by(Disability=Disability).first()
+	return render_template('edit_disabilities.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_disabilities', methods=['GET', 'POST'])
+@login_required
+def update_disabilities():
+	form = AddDisableForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE disable SET Frequency = " + str(form.freq.data) + " WHERE Disability = '" + str(request.form['disability']) + "';"
+			result = db.engine.execute(sql_string)
+			disableOut = pd.read_sql(db.session.query(Disable).statement, db.session.bind)
+			disableOut.to_csv('/srv/shiny-server/apps/PMW/disability.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	Disability = request.form['disability']
+	record = Disable.query.filter_by(Disability=Disability).first()
+	return render_template('edit_disabilities.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/training')
+@login_required
+def training():
+	all_recipes = Training.query.order_by(Training.Date).all()
+	form = AddTrainingForm(request.form)
+	return render_template('training.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_training', methods=['GET', 'POST'])
+@login_required
+def add_training():
+	form = AddTrainingForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_train = Training(str(form.date.data), form.participants.data, form.courses.data)
+							db.session.add(new_train)
+							db.session.commit()
+							trainOut = pd.read_sql(db.session.query(Training).statement, db.session.bind)
+							trainOut['Date'] = pd.to_datetime(trainOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							trainOut = trainOut.sort_values(by='Date')
+							trainOut.to_csv('/srv/shiny-server/apps/PMW/train.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Training" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_training.html', form=form)
+
+@recipes_blueprint.route('/edit_training', methods=['GET', 'POST'])
+@login_required
+def edit_training():
+	form = AddTrainingForm(request.form)
+	date = request.form['mydate']
+	record = Training.query.filter_by(Date=date).first()
+	return render_template('edit_training.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_training', methods=['GET', 'POST'])
+@login_required
+def update_training():
+	form = AddTrainingForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE training SET Participants = " + str(form.participants.data) + ", Courses = " + str(form.courses.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			trainOut = pd.read_sql(db.session.query(Training).statement, db.session.bind)
+			trainOut['Date'] = pd.to_datetime(trainOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			trainOut = trainOut.sort_values(by='Date')
+			trainOut.to_csv('/srv/shiny-server/apps/PMW/train.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	form = AddTrainingForm(request.form)
+	date = request.form['mydate']
+	record = Training.query.filter_by(Date=date).first()
+	return render_template('edit_training.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/events')
+@login_required
+def events():
+	all_recipes = Events.query.order_by(Events.Date).all()
+	form = AddEventsForm(request.form)
+	return render_template('events.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_events', methods=['GET', 'POST'])
+@login_required
+def add_events():
+	form = AddEventsForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_event = Events(str(form.date.data), form.participants.data, form.events.data)
+							db.session.add(new_event)
+							db.session.commit()
+							eventsOut = pd.read_sql(db.session.query(Events).statement, db.session.bind)
+							eventsOut['Date'] = pd.to_datetime(eventsOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							eventsOut = eventsOut.sort_values(by='Date')
+							eventsOut.to_csv('/srv/shiny-server/apps/PMW/events.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Events" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_events.html', form=form)
+
+@recipes_blueprint.route('/edit_events', methods=['GET', 'POST'])
+@login_required
+def edit_events():
+	form = AddEventsForm(request.form)
+	date = request.form['mydate']
+	record = Events.query.filter_by(Date=date).first()
+	return render_template('edit_events.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_events', methods=['GET', 'POST'])
+@login_required
+def update_events():
+	form = AddEventsForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE events SET Participants = " + str(form.participants.data) + ", Events = " + str(form.events.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			eventsOut = pd.read_sql(db.session.query(Events).statement, db.session.bind)
+			eventsOut['Date'] = pd.to_datetime(eventsOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			eventsOut = eventsOut.sort_values(by='Date')
+			eventsOut.to_csv('/srv/shiny-server/apps/PMW/events.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	date = request.form['mydate']
+	record = Events.query.filter_by(Date=date).first()
+	return render_template('edit_events.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/regional')
+@login_required
+def regional():
+	all_recipes = Regional.query.order_by(Regional.Date).all()
+	form = AddRegionalForm(request.form)
+	return render_template('regional.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_regional', methods=['GET', 'POST'])
+@login_required
+def add_regional():
+	form = AddRegionalForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_region = Regional(str(form.date.data), form.active.data, form.meetings.data)
+							db.session.add(new_region)
+							db.session.commit()
+							regionOut = pd.read_sql(db.session.query(Regional).statement, db.session.bind)
+							regionOut['Date'] = pd.to_datetime(regionOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							regionOut = regionOut.sort_values(by='Date')
+							regionOut.to_csv('/srv/shiny-server/apps/PMW/RG.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Regional" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_regional.html', form=form)
+
+@recipes_blueprint.route('/edit_regional', methods=['GET', 'POST'])
+@login_required
+def edit_regional():
+	form = AddRegionalForm(request.form)
+	date = request.form['mydate']
+	record = Regional.query.filter_by(Date=date).first()
+	return render_template('edit_regional.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_regional', methods=['GET', 'POST'])
+@login_required
+def update_regional():
+	form = AddRegionalForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE regional SET Active = " + str(form.active.data) + ", Meetings = " + str(form.meetings.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			regionOut = pd.read_sql(db.session.query(Regional).statement, db.session.bind)
+			regionOut['Date'] = pd.to_datetime(regionOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			regionOut = regionOut.sort_values(by='Date')
+			regionOut.to_csv('/srv/shiny-server/apps/PMW/RG.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	date = request.form['mydate']
+	record = Regional.query.filter_by(Date=date).first()
+	return render_template('edit_regional.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/sigs')
+@login_required
+def sigs():
+	all_recipes = SIGs.query.order_by(SIGs.Date).all()
+	form = AddSIGsForm(request.form)
+	return render_template('sigs.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_sigs', methods=['GET', 'POST'])
+@login_required
+def add_sigs():
+	form = AddSIGsForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_sig = SIGs(str(form.date.data), form.active.data, form.meetings.data)
+							db.session.add(new_sig)
+							db.session.commit()
+							sigOut = pd.read_sql(db.session.query(SIGs).statement, db.session.bind)
+							sigOut['Date'] = pd.to_datetime(sigOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							sigOut = sigOut.sort_values(by='Date')
+							sigOut.to_csv('/srv/shiny-server/apps/PMW/SIG.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "SIGs" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_sigs.html', form=form)
+
+@recipes_blueprint.route('/edit_sigs', methods=['GET', 'POST'])
+@login_required
+def edit_sigs():
+	form = AddSIGsForm(request.form)
+	date = request.form['mydate']
+	record = SIGs.query.filter_by(Date=date).first()
+	return render_template('edit_sigs.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_sigs', methods=['GET', 'POST'])
+@login_required
+def update_sigs():
+	form = AddSIGsForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE sigs SET Active = " + str(form.active.data) + ", Meetings = " + str(form.meetings.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			sigOut = pd.read_sql(db.session.query(SIGs).statement, db.session.bind)
+			sigOut['Date'] = pd.to_datetime(sigOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			sigOut = sigOut.sort_values(by='Date')
+			sigOut.to_csv('/srv/shiny-server/apps/PMW/SIG.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	date = request.form['mydate']
+	record = SIGs.query.filter_by(Date=date).first()
+	return render_template('edit_sigs.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/social')
+@login_required
+def social():
+	all_recipes = Social.query.order_by(Social.Date).all()
+	form = AddSocialForm(request.form)
+	return render_template('social.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_social', methods=['GET', 'POST'])
+@login_required
+def add_social():
+	form = AddSocialForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_social = Social(str(form.date.data), form.facebook.data, form.twitter.data, form.linkedIn.data)
+							db.session.add(new_social)
+							db.session.commit()
+							socialOut = pd.read_sql(db.session.query(Social).statement, db.session.bind)
+							socialOut['Date'] = pd.to_datetime(socialOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							socialOut = socialOut.sort_values(by='Date')
+							socialOut.to_csv('/srv/shiny-server/apps/PMW/social.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Social" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_social.html', form=form)
+
+@recipes_blueprint.route('/edit_social', methods=['GET', 'POST'])
+@login_required
+def edit_social():
+	form = AddSocialForm(request.form)
+	date = request.form['mydate']
+	record = Social.query.filter_by(Date=date).first()
+	return render_template('edit_social.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_social', methods=['GET', 'POST'])
+@login_required
+def update_social():
+	form = AddSocialForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE social SET Facebook = " + str(form.facebook.data) + ", Twitter = " + str(form.twitter.data) + ", LinkedIn = " + str(form.linkedIn.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			socialOut = pd.read_sql(db.session.query(Social).statement, db.session.bind)
+			socialOut['Date'] = pd.to_datetime(socialOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			socialOut = socialOut.sort_values(by='Date')
+			socialOut.to_csv('/srv/shiny-server/apps/PMW/social.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	date = request.form['mydate']
+	record = Social.query.filter_by(Date=date).first()
+	return render_template('edit_social.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/web')
+@login_required
+def web():
+	all_recipes = Web.query.order_by(Web.Date).all()
+	form = AddWebForm(request.form)
+	return render_template('web.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_web', methods=['GET', 'POST'])
+@login_required
+def add_web():
+	form = AddWebForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.date.data)) == 10:
+				if str(form.date.data)[4] == "-":
+					if str(form.date.data)[7] == "-":
+						try:
+							new_web = Web(str(form.date.data), form.visits.data, form.visitors.data)
+							db.session.add(new_web)
+							db.session.commit()
+							webOut = pd.read_sql(db.session.query(Web).statement, db.session.bind)
+							webOut['Date'] = pd.to_datetime(webOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+							webOut = webOut.sort_values(by='Date')
+							webOut.to_csv('/srv/shiny-server/apps/PMW/web.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate year. Please use "edit" on the "Web" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM-DD"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_web.html', form=form)
+
+@recipes_blueprint.route('/edit_web', methods=['GET', 'POST'])
+@login_required
+def edit_web():
+	form = AddWebForm(request.form)
+	date = request.form['mydate']
+	record = Web.query.filter_by(Date=date).first()
+	return render_template('edit_web.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_web', methods=['GET', 'POST'])
+@login_required
+def update_web():
+	form = AddWebForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE web SET Visits = " + str(form.visits.data) + ", Visitors = " + str(form.visitors.data) + " WHERE Date = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			webOut = pd.read_sql(db.session.query(Web).statement, db.session.bind)
+			webOut['Date'] = pd.to_datetime(webOut['Date'], format='%Y/%m/%d', dayfirst=True, errors='coerce')
+			webOut = webOut.sort_values(by='Date')
+			webOut.to_csv('/srv/shiny-server/apps/PMW/web.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	date = request.form['mydate']
+	record = Web.query.filter_by(Date=date).first()
+	return render_template('edit_web.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/courses')
+@login_required
+def courses():
+	all_recipes = Courses.query.order_by(Courses.Quarter).all()
+	form = AddCoursesForm(request.form)
+	return render_template('courses.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_course', methods=['GET', 'POST'])
+@login_required
+def add_course():
+	form = AddCoursesForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.quarter.data)) == 7:
+				if str(form.quarter.data)[4] == "-":
+					if str(form.quarter.data)[5] == "Q":
+						try:
+							new_web = Courses(str(form.quarter.data), form.oRSocietyCourses.data, form.oRSocietyBookings.data, form.analyticsCourses.data, form.analyticsBookings.data)
+							db.session.add(new_web)
+							db.session.commit()
+							courseOut = pd.read_sql(db.session.query(Courses).statement, db.session.bind)
+							courseOut = courseOut.sort_values(['Year', 'Quarter'])
+							courseOut.to_csv('/srv/shiny-server/apps/ADG/06coursessummary.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate quarter. Please use "edit" on the "Analytics Courses" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-QQ" (e.g. "2018-Q1")', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-QQ" (e.g. "2018-Q1")', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-QQ"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_course.html', form=form)
+
+@recipes_blueprint.route('/edit_course', methods=['GET', 'POST'])
+@login_required
+def edit_course():
+	form = AddCoursesForm(request.form)
+	quarter = request.form['mydate']
+	record = Courses.query.filter_by(Quarter=quarter).first()
+	return render_template('edit_course.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_course', methods=['GET', 'POST'])
+@login_required
+def update_course():
+	form = AddCoursesForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE courses SET ORSocietyCourses = " + str(form.oRSocietyCourses.data) + ", ORSocietyBookings = " + str(form.oRSocietyBookings.data) + ", AnalyticsCourses = " + str(form.analyticsCourses.data) + ", AnalyticsBookings = " + str(form.analyticsBookings.data) + " WHERE Quarter = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			courseOut = pd.read_sql(db.session.query(Courses).statement, db.session.bind)
+			courseOut = courseOut.sort_values(['Year', 'Quarter'])
+			courseOut.to_csv('/srv/shiny-server/apps/ADG/06coursessummary.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	quarter = request.form['mydate']
+	record = Courses.query.filter_by(Quarter=quarter).first()
+	return render_template('edit_course.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/summit', methods=['GET', 'POST'])
+@login_required
+def summit():
+	form = AddSummitForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.year.data)) == 4:
+				data = {'Year2': [int(form.year.data)], 'Year': [int(form.year.data)], 'MemberOthers': [int(form.memberOthers.data)], 'MemberCorporate': [int(form.memberCorporate.data)], 'MemberLapsedOrResigned': [int(form.memberLapsedOrResigned.data)], 'MemberStudents': [int(form.memberStudents.data)], 'Non-Members': [int(form.nonMembers.data)]}
+				summitOut = pd.DataFrame(data=data)
+				summitOut.to_csv('/srv/shiny-server/apps/ADG/02annualsummit.csv', sep=',', encoding='utf-8', index=False)
+				timeN = pd.Timestamp.now()
+				data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+				upTime = pd.DataFrame(data=data)
+				upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+				return redirect(url_for('recipes.index'))
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('summit.html', form=form)
+	
+@recipes_blueprint.route('/papers')
+@login_required
+def papers():
+	all_recipes = Papers.query.order_by(Papers.Year).all()
+	form = AddPapersForm(request.form)
+	return render_template('papers.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_paper', methods=['GET', 'POST'])
+@login_required
+def add_paper():
+	form = AddPapersForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.year.data)) == 4:
+				try:
+					new_paper = Papers(str(form.year.data), form.oRAnnual.data, form.yORBiennial.data)
+					db.session.add(new_paper)
+					db.session.commit()
+					paperOut = pd.read_sql(db.session.query(Papers).statement, db.session.bind)
+					paperOut = paperOut.sort_values('Year')
+					paperOut.to_csv('/srv/shiny-server/apps/ADG/07analyticspapers.csv', sep=',', encoding='utf-8', index=False)
+					timeN = pd.Timestamp.now()
+					data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+					upTime = pd.DataFrame(data=data)
+					upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+					return redirect(url_for('recipes.index'))
+				except:
+					db.session.rollback()
+					flash_errors(form)
+					flash('ERROR! Duplicate year. Please use "edit" on the "Conference Papers" menu to change.', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect year format. Format should be "YYYY"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_paper.html', form=form)
+
+@recipes_blueprint.route('/edit_paper', methods=['GET', 'POST'])
+@login_required
+def edit_paper():
+	form = AddPapersForm(request.form)
+	year = request.form['mydate']
+	record = Papers.query.filter_by(Year=year).first()
+	return render_template('edit_paper.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_paper', methods=['GET', 'POST'])
+@login_required
+def update_paper():
+	form = AddPapersForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE papers SET ORAnnual = " + str(form.oRAnnual.data) + ", YORBiennial = " + str(form.yORBiennial.data) + " WHERE Year = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			paperOut = pd.read_sql(db.session.query(Papers).statement, db.session.bind)
+			paperOut = paperOut.sort_values('Year')
+			paperOut.to_csv('/srv/shiny-server/apps/ADG/07analyticspapers.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	year = request.form['mydate']
+	record = Papers.query.filter_by(Year=year).first()
+	return render_template('edit_paper.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/probono')
+@login_required
+def probono():
+	all_recipes = Probono.query.order_by(Probono.Quarter).all()
+	form = AddProBonoForm(request.form)
+	return render_template('probono.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_probono', methods=['GET', 'POST'])
+@login_required
+def add_probono():
+	form = AddProBonoForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.quarter.data)) == 7:
+				if str(form.quarter.data)[4] == "-":
+					if str(form.quarter.data)[5] == "Q":
+						try:
+							new_web = Probono(str(form.quarter.data), form.proBonoProjects.data, form.pBAnalyticsProjects.data)
+							db.session.add(new_web)
+							db.session.commit()
+							probonoOut = pd.read_sql(db.session.query(Probono).statement, db.session.bind)
+							probonoOut = probonoOut.sort_values(['Year', 'Quarter'])
+							probonoOut.to_csv('/srv/shiny-server/apps/ADG/10probonoprojects.csv', sep=',', encoding='utf-8', index=False)
+							timeN = pd.Timestamp.now()
+							data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+							upTime = pd.DataFrame(data=data)
+							upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+							return redirect(url_for('recipes.index'))
+						except:
+							db.session.rollback()
+							flash_errors(form)
+							flash('ERROR! Duplicate quarter. Please use "edit" on the "Probono Projects" menu to change.', 'error')
+					else:
+						flash_errors(form)
+						flash('ERROR! Incorrect date format. Format should be "YYYY-QQ" (e.g. "2018-Q1")', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-QQ" (e.g. "2018-Q1")', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-QQ"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_probono.html', form=form)
+
+@recipes_blueprint.route('/edit_probono', methods=['GET', 'POST'])
+@login_required
+def edit_probono():
+	form = AddProBonoForm(request.form)
+	quarter = request.form['mydate']
+	record = Probono.query.filter_by(Quarter=quarter).first()
+	return render_template('edit_probono.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_probono', methods=['GET', 'POST'])
+@login_required
+def update_probono():
+	form = AddProBonoForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE probono SET ProBonoProjects = " + str(form.proBonoProjects.data) + ", PBAnalyticsProjects = " + str(form.pBAnalyticsProjects.data) + " WHERE Quarter = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			probonoOut = pd.read_sql(db.session.query(Probono).statement, db.session.bind)
+			probonoOut = probonoOut.sort_values(['Year', 'Quarter'])
+			probonoOut.to_csv('/srv/shiny-server/apps/ADG/10probonoprojects.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	quarter = request.form['mydate']
+	record = Probono.query.filter_by(Quarter=quarter).first()
+	return render_template('edit_probono.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/pages')
+@login_required
+def pages():
+	all_recipes = AnalyticsGA.query.order_by(AnalyticsGA.Year, AnalyticsGA.Month).all()
+	form = AddPagesForm(request.form)
+	return render_template('pages.html', recipes=all_recipes, form=form)	
+
+@recipes_blueprint.route('/add_pages', methods=['GET', 'POST'])
+@login_required
+def add_pages():
+	form = AddPagesForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.month.data)) == 7:
+				if str(form.month.data)[4] == "-":
+					try:
+						if 'file' not in request.files:
+							flash('ERROR! No file part', 'error')
+							flash_errors(form)
+							return redirect(request.url)
+						file = request.files['file']
+						# if user does not select file, browser also
+						# submit a empty part without filename
+						if file.filename == '':
+							flash('ERROR! No selected file', 'error')
+							flash_errors(form)
+							return redirect(request.url)
+						if file and allowed_file(file.filename) == True:
+							filename = secure_filename(file.filename)
+							fullFile = '/fileTemp/' + filename
+							file.save(fullFile)
+						mydata = pd.read_excel(fullFile, sheet_name=1)
+						mydata = mydata.drop(mydata.index[len(mydata)-1])
+						mydata['Type'] = np.where(mydata.Page.str.contains('(?i)pages/conference'), 'C', np.where(mydata.Page.str.contains('(?i)analyticsnetwork_join'), 'N',  np.where(mydata.Page.str.contains('(?i)pages/special'), 'S', 'O')))
+						x = mydata.groupby('Type')['Unique Page Views'].sum()
+						year = int(form.month.data[0:4])
+						month = int(form.month.data[5:])
+						date = str(form.month.data) + "-01"
+						new_ga = AnalyticsGA(year, 1, month, date, int(x['C']), int(x['S']), int(x['N']), int(x['O']))
+						convR = round(int(x['N']) / (int(x['C']) + int(x['S']) + int(x['N']) + int(x['O'])), 4)
+						new_ga2 = AnalyticsConv(date, convR)
+						db.session.add(new_ga)
+						db.session.add(new_ga2)
+						db.session.flush()
+						db.session.commit()
+						gaOut = pd.read_sql(db.session.query(AnalyticsGA).statement, db.session.bind)
+						gaOut = gaOut.sort_values(['Year', 'Month'])
+						gaOut.to_csv('/srv/shiny-server/apps/ADG/01pageviews.csv', sep=',', encoding='utf-8', index=False)
+						gaOut2 = pd.read_sql(db.session.query(AnalyticsConv).statement, db.session.bind)
+						gaOut2 = gaOut2.sort_values('Month')
+						gaOut2.to_csv('/srv/shiny-server/apps/ADG/01conversion.csv', sep=',', encoding='utf-8', index=False)
+						timeN = pd.Timestamp.now()
+						data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+						upTime = pd.DataFrame(data=data)
+						upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+						test = '/fileTemp/*'
+						r = glob.glob(test)
+						for i in r:
+							os.remove(i)
+						return redirect(url_for('recipes.index'))
+					except:
+						db.session.rollback()
+						flash_errors(form)
+						flash('ERROR! Duplicate Month. Please use "edit" on the "Analytics Pages" menu to change.', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM" (e.g. "2018-Q1")', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_pages.html', form=form)
+
+@recipes_blueprint.route('/edit_pages', methods=['GET', 'POST'])
+@login_required
+def edit_pages():
+	form = AddPagesForm(request.form)
+	month = request.form['mydate']
+	record = AnalyticsGA.query.filter_by(DateValue=month).first()
+	return render_template('edit_pages.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_pages', methods=['GET', 'POST'])
+@login_required
+def update_pages():
+	form = AddPagesForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE analyticsga SET ConferencePages = " + str(form.conferencePages.data) + ", SpecialInterestPages = " + str(form.specialInterestPages.data) +  ", JoinNetworkPage = " + str(form.joinNetworkPage.data) +  ", OtherPages = " + str(form.otherPages.data) + " WHERE DateValue = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			gaOut = pd.read_sql(db.session.query(AnalyticsGA).statement, db.session.bind)
+			gaOut = gaOut.sort_values(['Year', 'Month'])
+			gaOut.to_csv('/srv/shiny-server/apps/ADG/01pageviews.csv', sep=',', encoding='utf-8', index=False)
+			convR = round(int(form.joinNetworkPage.data) / (int(form.joinNetworkPage.data) + int(form.conferencePages.data) + int(form.specialInterestPages.data) + int(form.otherPages.data)), 4)
+			sql_string2 = "UPDATE analyticscv SET AnalyticsNetworkConversionRate = " + str(convR) + " WHERE Month = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string2)
+			gaOut2 = pd.read_sql(db.session.query(AnalyticsConv).statement, db.session.bind)
+			gaOut2 = gaOut2.sort_values('Month')
+			gaOut2.to_csv('/srv/shiny-server/apps/ADG/01conversion.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	month = request.form['mydate']
+	record = AnalyticsGA.query.filter_by(DateValue=month).first()
+	return render_template('edit_pages.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/quarterly')
+@login_required
+def quarterly():
+	all_recipes = Quarterly.query.order_by(Quarterly.DateValue).all()
+	form = AddQuarterForm(request.form)
+	return render_template('quarterly.html', recipes=all_recipes, form=form)	
+
+@recipes_blueprint.route('/add_quarterly', methods=['GET', 'POST'])
+@login_required
+def add_quarterly():
+	form = AddQuarterForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.month.data)) == 7:
+				if str(form.month.data)[4] == "-":
+					try:
+						if 'file' not in request.files:
+							flash('ERROR! No file part', 'error')
+							flash_errors(form)
+							return redirect(request.url)
+						file = request.files['file']
+						# if user does not select file, browser also
+						# submit a empty part without filename
+						if file.filename == '':
+							flash('ERROR! No selected file', 'error')
+							flash_errors(form)
+							return redirect(request.url)
+						if file and allowed_file(file.filename) == True:
+							filename = secure_filename(file.filename)
+							fullFile = '/fileTemp/' + filename
+							file.save(fullFile)
+						mydata = pd.read_excel(fullFile, sheet_name=1)
+						mydata = mydata.drop(mydata.index[len(mydata)-1])
+						date = str(form.month.data) + "-01"
+						new_quart = Quarterly(date, int(mydata['Unique Page Views'].sum()), 0)
+						db.session.add(new_quart)
+						db.session.flush()
+						db.session.commit()
+						gaOut = pd.read_sql(db.session.query(Quarterly).statement, db.session.bind)
+						gaOut = gaOut.sort_values('DateValue')
+						gaOut.to_csv('/srv/shiny-server/apps/ADG/04analyticsquarterly.csv', sep=',', encoding='utf-8', index=False)
+						timeN = pd.Timestamp.now()
+						data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+						upTime = pd.DataFrame(data=data)
+						upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+						test = '/fileTemp/*'
+						r = glob.glob(test)
+						for i in r:
+							os.remove(i)
+						return redirect(url_for('recipes.index'))
+					except:
+						db.session.rollback()
+						flash_errors(form)
+						flash('ERROR! Duplicate Date. Please use "edit" on the "Analytics Quarterly" menu to change.', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM" (e.g. "2018-Q1")', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_quarterly.html', form=form)
+
+@recipes_blueprint.route('/edit_quarterly', methods=['GET', 'POST'])
+@login_required
+def edit_quarterly():
+	form = AddQuarterForm(request.form)
+	month = request.form['mydate']
+	record = Quarterly.query.filter_by(DateValue=month).first()
+	return render_template('edit_quarterly.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_quarterly', methods=['GET', 'POST'])
+@login_required
+def update_quarterly():
+	form = AddQuarterForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE quarterly SET AnalyticsCatalogUPViews = " + str(form.analyticsCatalogUPViews.data) + ", AnalyticsAQUPviews = " + str(form.analyticsAQUPviews.data) +  " WHERE DateValue = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			gaOut = pd.read_sql(db.session.query(Quarterly).statement, db.session.bind)
+			gaOut = gaOut.sort_values('DateValue')
+			gaOut.to_csv('/srv/shiny-server/apps/ADG/04analyticsquarterly.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	month = request.form['mydate']
+	record = Quarterly.query.filter_by(DateValue=month).first()
+	return render_template('edit_quarterly.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/twitter')
+@login_required
+def twitter():
+	all_recipes = Twitter.query.order_by(Twitter.DateValue).all()
+	form = AddTwitterForm(request.form)
+	return render_template('twitter.html', recipes=all_recipes, form=form)	
+
+@recipes_blueprint.route('/add_twitter', methods=['GET', 'POST'])
+@login_required
+def add_twitter():
+	form = AddTwitterForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.month.data)) == 7:
+				if str(form.month.data)[4] == "-":
+					try:
+						if 'file' not in request.files:
+							flash('ERROR! No file part', 'error')
+							flash_errors(form)
+							return redirect(request.url)
+						file = request.files['file']
+						# if user does not select file, browser also
+						# submit a empty part without filename
+						if file.filename == '':
+							flash('ERROR! No selected file', 'error')
+							flash_errors(form)
+							return redirect(request.url)
+						if file and allowed_file(file.filename) == True:
+							filename = secure_filename(file.filename)
+							fullFile = '/fileTemp/' + filename
+							file.save(fullFile)
+						mydata = pd.read_csv(fullFile)
+						mydata.rename(columns={'Tweet text': 'text'}, inplace=True)
+						mydata['Analytics'] = np.where(mydata.text.str.contains('(?i)analytics'), "A", "N")
+						x = mydata.groupby('Analytics')['impressions', 'engagements'].sum()
+						date = str(form.month.data) + "-01"
+						new_tweet = Twitter(date, int(x['impressions']['A']), int(x['impressions']['N']) + int(x['impressions']['A']), int(x['engagements']['A']), int(x['engagements']['N']) + int(x['engagements']['A']))
+						db.session.add(new_tweet)
+						db.session.flush()
+						db.session.commit()
+						twOut = pd.read_sql(db.session.query(Twitter).statement, db.session.bind)
+						twOut = twOut.sort_values('DateValue')
+						twOut.to_csv('/srv/shiny-server/apps/ADG/12twitterengagement.csv', sep=',', encoding='utf-8', index=False)
+						timeN = pd.Timestamp.now()
+						data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+						upTime = pd.DataFrame(data=data)
+						upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+						test = '/fileTemp/*'
+						r = glob.glob(test)
+						for i in r:
+							os.remove(i)
+						return redirect(url_for('recipes.index'))
+					except:
+						db.session.rollback()
+						flash_errors(form)
+						flash('ERROR! Duplicate Date. Please use "edit" on the "Twitter" menu to change.', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM" (e.g. "2018-Q1")', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM"', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_twitter.html', form=form)
+
+@recipes_blueprint.route('/edit_twitter', methods=['GET', 'POST'])
+@login_required
+def edit_twitter():
+	form = AddTwitterForm(request.form)
+	month = request.form['mydate']
+	record = Twitter.query.filter_by(DateValue=month).first()
+	return render_template('edit_twitter.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_twitter', methods=['GET', 'POST'])
+@login_required
+def update_twitter():
+	form = AddTwitterForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE twitter SET AnalyticsImpressions = " + str(form.analyticsImpressions.data) + ", ORSocietyImpressions = " + str(form.oRSocietyImpressions.data) + ", AnalyticsEngagements1 = " + str(form.analyticsEngagements1.data) + ", ORSocietyEngagements = " + str(form.oRSocietyEngagements.data) + " WHERE DateValue = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			twOut = pd.read_sql(db.session.query(Twitter).statement, db.session.bind)
+			twOut = twOut.sort_values('DateValue')
+			twOut.to_csv('/srv/shiny-server/apps/ADG/12twitterengagement.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	month = request.form['mydate']
+	record = Twitter.query.filter_by(DateValue=month).first()
+	return render_template('edit_twitter.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/network')
+@login_required
+def network():
+	all_recipes = Network.query.all()
+	form = AddNetworkForm(request.form)
+	return render_template('network.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/edit_network', methods=['GET', 'POST'])
+@login_required
+def edit_network():
+	form = AddNetworkForm(request.form)
+	record = Network.query.filter_by(id=1).first()
+	return render_template('edit_network.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_network', methods=['GET', 'POST'])
+@login_required
+def update_network():
+	form = AddNetworkForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE network SET ORSResignedMember = " + str(form.oRSResignedMember.data) + ", ORSLapsedMember = " + str(form.oRSLapsedMember.data) + ", ORSCurrentMember = " + str(form.oRSCurrentMember.data) + ", ORSNonMembers = " + str(form.oRSNonMembers.data) + " WHERE id = 1;"
+			result = db.engine.execute(sql_string)
+			timeN = pd.Timestamp.now()
+			data = {'ReportDate': [str(timeN.strftime('%Y-%m-%d'))], 'ORSResignedMember': [form.oRSResignedMember.data], 'ORSLapsedMember': [form.oRSLapsedMember.data], 'ORSCurrentMember': [form.oRSCurrentMember.data], 'ORSNonMembers': [form.oRSNonMembers.data]}
+			networkOut = pd.DataFrame(data=data)
+			networkOut.to_csv('/srv/shiny-server/apps/ADG/11analyticsnetwork.csv', sep=',', encoding='utf-8', index=False)
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	record = Network.query.filter_by(id=1).first()
+	return render_template('edit_network.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/meetup')
+@login_required
+def meetup():
+	all_recipes = Meetup.query.all()
+	form = AddMeetupForm(request.form)
+	return render_template('meetup.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/edit_meetup', methods=['GET', 'POST'])
+@login_required
+def edit_meetup():
+	form = AddMeetupForm(request.form)
+	record = Meetup.query.filter_by(id=1).first()
+	return render_template('edit_meetup.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_meetup', methods=['GET', 'POST'])
+@login_required
+def update_meetup():
+	form = AddMeetupForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE meetup SET Meetup = " + str(form.meetup.data) + ", LinkedIn = " + str(form.linkedIn.data) + ", Twitter = " + str(form.twitter.data) + ", Facebook = " + str(form.facebook.data) + ", YouTube = " + str(form.youTube.data) + " WHERE id = 1;"
+			result = db.engine.execute(sql_string)
+			timeN = pd.Timestamp.now()
+			data = {'ReportDate': [str(timeN.strftime('%Y-%m-%d'))], 'Meetup': [form.meetup.data], 'LinkedIn': [form.linkedIn.data], 'Twitter': [form.twitter.data], 'Facebook': [form.facebook.data], 'YouTube': [form.youTube.data]}
+			meetupOut = pd.DataFrame(data=data)
+			meetupOut.to_csv('/srv/shiny-server/apps/ADG/14meetupfollowers.csv', sep=',', encoding='utf-8', index=False)
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/PMW/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	record = Meetup.query.filter_by(id=1).first()
+	return render_template('edit_meetup.html', form=form, recipes=record)
+	
+@recipes_blueprint.route('/youtube')
+@login_required
+def youtube():
+	all_recipes = Channel.query.order_by(Channel.DateValue).all()
+	form = AddYouTubeForm(request.form)
+	return render_template('youtube.html', recipes=all_recipes, form=form)
+	
+@recipes_blueprint.route('/add_youtube', methods=['GET', 'POST'])
+@login_required
+def add_youtube():
+	form = AddYouTubeForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			if len(str(form.month.data)) == 7:
+				if str(form.month.data)[4] == "-":
+					try:
+						date = str(form.month.data) + "-01"
+						new_web = Channel(date, form.share.data, form.cview.data)
+						new_web2 = Playlist(date, form.watchTime.data, form.pview.data)
+						db.session.add(new_web)
+						db.session.add(new_web2)
+						db.session.commit()
+						channelOut = pd.read_sql(db.session.query(Channel).statement, db.session.bind)
+						channelOut = channelOut.sort_values('DateValue')
+						channelOut.to_csv('/srv/shiny-server/apps/ADG/13channelsharing.csv', sep=',', encoding='utf-8', index=False)
+						playOut = pd.read_sql(db.session.query(Playlist).statement, db.session.bind)
+						playOut = playOut.sort_values('DateValue')
+						playOut.to_csv('/srv/shiny-server/apps/ADG/13playlistsharing.csv', sep=',', encoding='utf-8', index=False)
+						timeN = pd.Timestamp.now()
+						data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+						upTime = pd.DataFrame(data=data)
+						upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+						return redirect(url_for('recipes.index'))
+					except:
+						db.session.rollback()
+						flash_errors(form)
+						flash('ERROR! Duplicate date. Please use "edit" on the "YouTube" menu to change.', 'error')
+				else:
+					flash_errors(form)
+					flash('ERROR! Incorrect date format. Format should be "YYYY-MM" (e.g. "2018-08")', 'error')
+			else:
+				flash_errors(form)
+				flash('ERROR! Incorrect date format. Format should be "YYYY-MM" (e.g. "2018-08")', 'error')
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+	
+	return render_template('add_youtube.html', form=form)
+
+@recipes_blueprint.route('/edit_youtube', methods=['GET', 'POST'])
+@login_required
+def edit_youtube():
+	form = AddYouTubeForm(request.form)
+	month = request.form['mydate']
+	record = Channel.query.filter_by(DateValue=month).first()
+	return render_template('edit_youtube.html', form=form, recipes=record)
+
+@recipes_blueprint.route('/update_youtube', methods=['GET', 'POST'])
+@login_required
+def update_youtube():
+	form = AddYouTubeForm(request.form)
+	if request.method == 'POST':
+		if form.validate_on_submit():
+			sql_string = "UPDATE channel SET Share = " + str(form.share.data) + ", View = " + str(form.cview.data) + " WHERE DateValue = '" + str(request.form['mydate']) + "';"
+			result = db.engine.execute(sql_string)
+			channelOut = pd.read_sql(db.session.query(Channel).statement, db.session.bind)
+			channelOut = channelOut.sort_values('DateValue')
+			channelOut.to_csv('/srv/shiny-server/apps/ADG/13channelsharing.csv', sep=',', encoding='utf-8', index=False)
+			timeN = pd.Timestamp.now()
+			data = {'Update': ['Updated ' + str(timeN.strftime('%d %B %Y'))]}
+			upTime = pd.DataFrame(data=data)
+			upTime.to_csv('/srv/shiny-server/apps/ADG/updateTime.csv', sep=',', encoding='utf-8', index=False)
+			return redirect(url_for('recipes.index'))
+		else:
+			flash_errors(form)
+			flash('ERROR! Data was not added.', 'error')
+
+	month = request.form['mydate']
+	record = Channel.query.filter_by(DateValue=month).first()
+	return render_template('edit_youtube.html', form=form, recipes=record)
